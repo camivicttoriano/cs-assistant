@@ -3,14 +3,12 @@ import re
 import requests
 from slack_bolt import App
 from slack_bolt.adapter.socket_mode import SocketModeHandler
-from anthropic import Anthropic
 
 # === CONFIGURACIÓN ===
 # Estos valores se leen de variables de entorno (archivo .env)
 SLACK_BOT_TOKEN = os.environ["SLACK_BOT_TOKEN"]          # xoxb-...
 SLACK_APP_TOKEN = os.environ["SLACK_APP_TOKEN"]           # xapp-...
 HUBSPOT_API_KEY = os.environ["HUBSPOT_API_KEY"]           # pat-...
-ANTHROPIC_API_KEY = os.environ["ANTHROPIC_API_KEY"]       # sk-ant-...
 
 # Canal donde funciona el bot
 CANAL_CONSULTA = "consulta-cliente"
@@ -35,7 +33,6 @@ HUBSPOT_PROPERTIES = [
 
 # === INICIALIZAR APP ===
 app = App(token=SLACK_BOT_TOKEN)
-anthropic = Anthropic(api_key=ANTHROPIC_API_KEY)
 
 
 def buscar_contacto_hubspot(email):
