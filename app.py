@@ -166,7 +166,7 @@ def resumir_notas_con_claude(notas):
                 "content-type": "application/json",
             },
             json={
-                "model": "claude-3-5-haiku-20241022",
+                "model": "claude-haiku-4-5-20251001",
                 "max_tokens": 300,
                 "messages": [
                     {
@@ -310,15 +310,14 @@ def construir_resumen(props, contact_id=None):
 ━━ *Notas recientes* ━━
 📝 {resumen_notas}"""
             else:
-                # Sin Claude, mostrar la última nota truncada
-                ultima = notas[0]
-                texto_truncado = ultima["texto"][:200]
-                if len(ultima["texto"]) > 200:
-                    texto_truncado += "..."
-                resumen += f"""
-
-━━ *Notas recientes* ━━
-📝 Última nota ({ultima['fecha']}): {texto_truncado}"""
+                # Sin Claude, mostrar las últimas notas formateadas
+                resumen += "\n\n━━ *Notas recientes* ━━"
+                for nota in notas[:3]:
+                    texto_truncado = nota["texto"][:150]
+                    if len(nota["texto"]) > 150:
+                        texto_truncado += "..."
+                    fecha = nota.get("fecha", "sin fecha")
+                    resumen += f"\n📝 _{fecha}_ — {texto_truncado}"
 
     return resumen
 
