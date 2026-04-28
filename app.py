@@ -46,6 +46,19 @@ HUBSPOT_PROPERTIES = [
 # === INICIALIZAR APP ===
 app = App(token=SLACK_BOT_TOKEN)
 
+# Obtener Portal ID de HubSpot para construir links
+HUBSPOT_PORTAL_ID = ""
+try:
+    _resp = requests.get(
+        "https://api.hubapi.com/account-info/v3/details",
+        headers={"Authorization": f"Bearer {HUBSPOT_API_KEY}"},
+    )
+    if _resp.status_code == 200:
+        HUBSPOT_PORTAL_ID = str(_resp.json().get("portalId", ""))
+        print(f"HubSpot Portal ID: {HUBSPOT_PORTAL_ID}")
+except Exception:
+    print("No se pudo obtener el Portal ID de HubSpot")
+
 
 # === FUNCIONES HUBSPOT ===
 
@@ -256,11 +269,16 @@ def construir_resumen(props, contact_id=None):
     plan = val(props.get("subscription_plan_name"))
     frecuencia = val(props.get("subscription_plan"))
 
+    # Link a HubSpot
+    hubspot_link = ""
+    if contact_id and HUBSPOT_PORTAL_ID:
+        hubspot_link = f"\n🔶 HubSpot: <https://app.hubspot.com/contacts/{HUBSPOT_PORTAL_ID}/record/0-1/{contact_id}|Ver en HubSpot>"
+
     # === Datos generales ===
     resumen = f"""📋 *Resumen de cliente: {nombre}*
 
 ━━ *Datos generales* ━━
-🔗 Perfil: {perfil_texto}
+🔗 Perfil: {perfil_texto}{hubspot_link}
 👤 Profesión: {val(props.get('profesion'))}
 📊 Plan: {plan} ({frecuencia})
 🔒 Agenda cerrada: {sino(props.get('is_agenda_closed'))}
