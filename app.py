@@ -3,16 +3,15 @@ import re
 import requests
 from slack_bolt import App
 from slack_bolt.adapter.socket_mode import SocketModeHandler
-
+ 
 # === CONFIGURACIÓN ===
-# Estos valores se leen de variables de entorno (archivo .env)
-SLACK_BOT_TOKEN = os.environ["SLACK_BOT_TOKEN"]          # xoxb-...
-SLACK_APP_TOKEN = os.environ["SLACK_APP_TOKEN"]           # xapp-...
-HUBSPOT_API_KEY = os.environ["HUBSPOT_API_KEY"]           # pat-...
-
-# Canal donde funciona el bot
+SLACK_BOT_TOKEN = os.environ["SLACK_BOT_TOKEN"]
+SLACK_APP_TOKEN = os.environ["SLACK_APP_TOKEN"]
+HUBSPOT_API_KEY = os.environ["HUBSPOT_API_KEY"]
+ 
+# Canal donde funciona el bot automáticamente
 CANAL_CONSULTA = "consulta-cliente"
-
+ 
 # Propiedades de HubSpot que queremos consultar
 HUBSPOT_PROPERTIES = [
     "enc_profile_link",
@@ -30,13 +29,13 @@ HUBSPOT_PROPERTIES = [
     "lastname",
     "email",
 ]
-
+ 
 # === INICIALIZAR APP ===
 app = App(token=SLACK_BOT_TOKEN)
-
-
-def buscar_contacto_hubspot(email):
-    """Busca un contacto en HubSpot por email y devuelve sus propiedades."""
+ 
+ 
+def buscar_contacto_por_email(email):
+    """Busca un contacto en HubSpot por email."""
     url = "https://api.hubapi.com/crm/v3/objects/contacts/search"
     headers = {
         "Authorization": f"Bearer {HUBSPOT_API_KEY}",
@@ -56,26 +55,43 @@ def buscar_contacto_hubspot(email):
         ],
         "properties": HUBSPOT_PROPERTIES,
     }
-
+ 
     response = requests.post(url, json=payload, headers=headers)
-
     if response.status_code != 200:
-        return None
-
+        return []
+ 
     data = response.json()
-    if data.get("total", 0) == 0:
-        return None
-
-    return data["results"][0]["properties"]
-
-
+    return data.get("results", [])
+ 
+ 
+def buscar_contacto_por_nombre(nombre):
+    """Busca contactos en HubSpot por nombre usando búsqueda general."""
+    url = "https://api.hubapi.com/crm/v3/objects/contacts/search"
+    headers = {
+        "Authorization": f"Bearer {HUBSPOT_API_KEY}",
+        "Content-Type": "application/json",
+    }
+    payload = {
+        "query": nombre.strip(),
+        "properties": HUBSPOT_PROPERTIES,
+        "limit": 5,
+    }
+ 
+    response = requests.post(url, json=payload, headers=headers)
+    if response.status_code != 200:
+        return []
+ 
+    data = response.json()
+    return data.get("results", [])
+ 
+ 
 def formatear_valor(valor):
     """Formatea un valor para mostrar en Slack."""
     if valor is None or valor == "" or valor == "null":
         return "Sin información"
     return str(valor)
-
-
+ 
+ 
 def formatear_monto(valor):
     """Formatea montos en pesos chilenos con separador de miles."""
     if valor is None or valor == "" or valor == "null":
@@ -87,8 +103,8 @@ def formatear_monto(valor):
         return f"${numero:,.0f}".replace(",", ".")
     except (ValueError, TypeError):
         return str(valor)
-
-
+ 
+ 
 def formatear_booleano(valor):
     """Convierte true/false a Sí/No."""
     if valor is None or valor == "" or valor == "null":
@@ -98,19 +114,19 @@ def formatear_booleano(valor):
     if str(valor).lower() in ("false", "0", "no"):
         return "No"
     return str(valor)
-
-
+ 
+ 
 def construir_resumen(props):
     """Construye el mensaje de resumen para Slack."""
     nombre = f"{formatear_valor(props.get('firstname'))} {formatear_valor(props.get('lastname'))}".strip()
     if nombre == "Sin información Sin información":
         nombre = "Sin información"
-
+ 
     perfil = props.get("enc_profile_link")
     perfil_texto = f"<{perfil}|Ver perfil>" if perfil and perfil != "null" else "Sin información"
-
+ 
     resumen = f"""📋 *Resumen de cliente: {nombre}*
-
+ 
 🔗 Perfil: {perfil_texto}
 👤 Profesión: {formatear_valor(props.get('profesion'))}
 📊 Plan: {formatear_valor(props.get('subscription_plan_name'))} ({formatear_valor(props.get('subscription_plan'))})
@@ -121,10 +137,22 @@ def construir_resumen(props):
 🛍️ Servicios: {formatear_valor(props.get('services_quantity'))}
 📈 Flujo de pacientes: {formatear_valor(props.get('range'))}
 💰 Transado últimos 30 días: {formatear_monto(props.get('last_30_days_payment_amount_via_encuadrado'))}"""
-
+ 
     return resumen
-
-
+ 
+ 
+def construir_lista_resultados(resultados):
+    """Construye un mensaje con la lista de resultados encontrados."""
+    mensaje = f"🔍 Encontré *{len(resultados)} resultados*. Escribe el email del que necesitas:\n\n"
+    for r in resultados:
+        props = r.get("properties", {})
+        nombre = f"{formatear_valor(props.get('firstname'))} {formatear_valor(props.get('lastname'))}".strip()
+        email = formatear_valor(props.get("email"))
+        plan = formatear_valor(props.get("subscription_plan_name"))
+        mensaje += f"• *{nombre}* — {email} — Plan: {plan}\n"
+    return mensaje
+ 
+ 
 def extraer_email(texto):
     """Extrae la primera dirección de email de un texto."""
     patron = r'[a-zA-Z0-9._%+\-]+@[a-zA-Z0-9.\-]+\.[a-zA-Z]{2,}'
@@ -132,96 +160,93 @@ def extraer_email(texto):
     if resultado:
         return resultado.group(0)
     return None
-
-
+ 
+ 
+def limpiar_texto(texto):
+    """Limpia el texto de menciones de Slack y espacios extra."""
+    # Remover menciones tipo <@U04G8LEN25S>
+    texto = re.sub(r'<@[A-Z0-9]+>', '', texto)
+    return texto.strip()
+ 
+ 
+def procesar_consulta(texto, say, thread_ts):
+    """Procesa una consulta de cliente por email o nombre."""
+    texto_limpio = limpiar_texto(texto)
+    email = extraer_email(texto_limpio)
+ 
+    if email:
+        # Búsqueda por email
+        say(text=f"🔍 Buscando *{email}* en HubSpot...", thread_ts=thread_ts)
+        resultados = buscar_contacto_por_email(email)
+ 
+        if not resultados:
+            say(
+                text=f"❌ No encontré un contacto con el email *{email}* en HubSpot. Revisa que esté bien escrito.",
+                thread_ts=thread_ts,
+            )
+            return
+ 
+        resumen = construir_resumen(resultados[0].get("properties", {}))
+        say(text=resumen, thread_ts=thread_ts)
+ 
+    else:
+        # Búsqueda por nombre
+        nombre = texto_limpio
+        if not nombre:
+            say(
+                text="👋 Escribe el email o nombre del cliente que quieres consultar.",
+                thread_ts=thread_ts,
+            )
+            return
+ 
+        say(text=f"🔍 Buscando *{nombre}* en HubSpot...", thread_ts=thread_ts)
+        resultados = buscar_contacto_por_nombre(nombre)
+ 
+        if not resultados:
+            say(
+                text=f"❌ No encontré ningún contacto con el nombre *{nombre}* en HubSpot.",
+                thread_ts=thread_ts,
+            )
+            return
+ 
+        if len(resultados) == 1:
+            # Un solo resultado — mostrar resumen directo
+            resumen = construir_resumen(resultados[0].get("properties", {}))
+            say(text=resumen, thread_ts=thread_ts)
+        else:
+            # Múltiples resultados — mostrar lista
+            lista = construir_lista_resultados(resultados)
+            say(text=lista, thread_ts=thread_ts)
+ 
+ 
 # === EVENTO: Mensaje en canal ===
 @app.event("message")
 def manejar_mensaje(event, say, client):
-    """Responde cuando alguien escribe un email en #consulta-cliente."""
-
-    # Ignorar mensajes de bots (incluido el propio)
+    """Responde cuando alguien escribe en #consulta-cliente."""
+ 
     if event.get("bot_id") or event.get("subtype"):
         return
-
-    # Obtener info del canal
+ 
     canal_info = client.conversations_info(channel=event["channel"])
     canal_nombre = canal_info["channel"]["name"]
-
-    # Solo responder en #consulta-cliente
+ 
     if canal_nombre != CANAL_CONSULTA:
         return
-
-    texto = event.get("text", "")
-    email = extraer_email(texto)
-
-    if not email:
-        say(
-            text="👋 Escribe el email del cliente que quieres consultar y te traigo su info de HubSpot.",
-            thread_ts=event["ts"],
-        )
-        return
-
-    # Buscar en HubSpot
-    say(
-        text=f"🔍 Buscando *{email}* en HubSpot...",
-        thread_ts=event["ts"],
-    )
-
-    props = buscar_contacto_hubspot(email)
-
-    if props is None:
-        say(
-            text=f"❌ No encontré un contacto con el email *{email}* en HubSpot. Revisa que esté bien escrito.",
-            thread_ts=event["ts"],
-        )
-        return
-
-    # Enviar resumen
-    resumen = construir_resumen(props)
-    say(
-        text=resumen,
-        thread_ts=event["ts"],
-    )
-
-
+ 
+    procesar_consulta(event.get("text", ""), say, event["ts"])
+ 
+ 
 # === EVENTO: Mención de la app ===
 @app.event("app_mention")
 def manejar_mencion(event, say, client):
-    """Responde cuando alguien etiqueta a la app con un email."""
-
-    texto = event.get("text", "")
-    email = extraer_email(texto)
-
-    if not email:
-        say(
-            text="👋 Etiquétame con el email del cliente, por ejemplo: `@CS Assistant cliente@ejemplo.com`",
-            thread_ts=event.get("thread_ts", event["ts"]),
-        )
-        return
-
-    say(
-        text=f"🔍 Buscando *{email}* en HubSpot...",
-        thread_ts=event.get("thread_ts", event["ts"]),
-    )
-
-    props = buscar_contacto_hubspot(email)
-
-    if props is None:
-        say(
-            text=f"❌ No encontré un contacto con el email *{email}* en HubSpot. Revisa que esté bien escrito.",
-            thread_ts=event.get("thread_ts", event["ts"]),
-        )
-        return
-
-    resumen = construir_resumen(props)
-    say(
-        text=resumen,
-        thread_ts=event.get("thread_ts", event["ts"]),
-    )
-
-
+    """Responde cuando alguien etiqueta a la app con un email o nombre."""
+    thread_ts = event.get("thread_ts", event["ts"])
+    procesar_consulta(event.get("text", ""), say, thread_ts)
+ 
+ 
 # === INICIAR ===
 if __name__ == "__main__":
     print("🤖 CS Assistant está corriendo...")
     handler = SocketModeHandler(app, SLACK_APP_TOKEN)
     handler.start()
+ 
