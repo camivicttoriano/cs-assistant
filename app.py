@@ -166,7 +166,7 @@ def resumir_notas_con_claude(notas):
                 "content-type": "application/json",
             },
             json={
-                "model": "claude-sonnet-4-20250514",
+                "model": "claude-3-5-haiku-20241022",
                 "max_tokens": 300,
                 "messages": [
                     {
@@ -186,8 +186,10 @@ Notas:
             data = response.json()
             return data["content"][0]["text"]
         else:
+            print(f"Error Claude API: {response.status_code} - {response.text}")
             return None
-    except Exception:
+    except Exception as e:
+        print(f"Excepción Claude API: {e}")
         return None
 
 
